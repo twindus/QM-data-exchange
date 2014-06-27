@@ -1,0 +1,328 @@
+# input4bsse.py
+#
+# USAGE: python input4bsse.py filename.out
+# by: Victor M. Rosas Garcia rosas.victor@gmail.com
+# 2009-08-14
+# developed with python 2.5.2
+#
+# this program generates GAMESS-US input files for BSSE 
+# counterpoise correction calculations on clusters.
+# It takes two input files:
+# a GAMESS-US geometry optimization output file.  The name
+#    of this file must have a 3-letter extension.  The
+#    extension itself can be whatever you want.
+# a "molecules.dat" text file
+#
+# It works by scanning for the xyz coordinates of the 
+# equilibrium geometry and for the basis functions used
+# for each atom.
+# Currently it only works for C1 symmetry groups, anything else
+# will not yield enough atoms, with the probable exception of some
+# Cs cases (when all the atoms are contained in the Cs plane).
+#
+# The purpose of the "molecules.dat" file is to supply
+# information on which groups of atoms form molecules, as
+# currently this program is not smart enough to find that
+# out by itself.  The user must generate "molecules.dat" as a
+# plain text file.
+#
+# The format of "molecules.dat" is as follows:
+#
+# moleculeId=atomno1,atomno2,atomno3...
+#
+# where moleculeId is completely user-defined with ASCII characters.  There should be
+# no spaces at the sides of the "=" sign or after the commas
+# e.g. if a water dimer was defined as follows:
+# O  x1  y1  z1
+# H  x2  y2  z2
+# H  x3  y3  z3
+# O  x4  y4  z4
+# H  x5  y5  z5
+# H  x6  y6  z6
+# then the contents of "molecules.dat" would be (minus the '# '):
+# water1=1,2,3
+# water2=4,5,6
+# it could equally well be:
+# agua1=1,2,3
+# agua2=4,5,6
+# The program then generates a single geometry input file
+# for each molecule in the cluster, and an input file
+# for each molecule with all the atoms in the other molecules
+# defined as ghost atoms.  The moleculeIds become part of the 
+# filenames, and are included in the input file comment, for
+# ease in keeping track of things.
+# The filenames follow the pattern: filename_geom_moleculeid.inp
+# and filename_bsse_moleculeid.inp
+
+import sys, csv
+eq_geom=dict() #dictionary for full geom
+basis = dict() #dictionary for basis set
+geom_basis = dict() #mapping eq_geom <--> basis
+basis_count = dict()# this tells me how many lines after an atom contain its basis set
+
+molecules = dict() # list of user-defined molecules
+geom_file = dict() # dictionary of geometry files file streams
+bsse_file = dict() # dictionary of bsse files file stremas
+one_geom = []
+bsse_out = dict()
+
+if sys.argv[1] == '-h':
+  print "USO: python input4bsse.py nombrearchivo.out"
+  print "by: Victor M. Rosas Garcia rosas.victor@gmail.com"
+  print "2009-08-14"
+  print "desarrollado con python 2.5.2"
+  print "este programa genera archivos de entrada de GAMESS-US para calculos de correccion por BSSE en agregados."
+  print "Requiere dos archivos de entrada:"
+  print "***Un archivo de salida de optimacion geometrica de GAMESS-US.  El nombre debe tener una extension de tres letras.  La extension puede ser lo que el usuario quiera."
+  print "***Un archivo de texto \"molecules.dat\""
+  print "\n"
+  print "Funciona haciendo un barrido buscando la coordenadas xyz de la geometria de equilibrio y las funciones base usadas para cada atomo."
+  print "Al presente solamente funciona para el grupo de simetria C1, cualquier otro grupo no proporcionara suficientes atomos, con la probable excepcion de algunos casos de Cs (cuando todos los atomos estan contenidos en el plano Cs)."
+  print "El archivo \"molecules.dat\" proporciona informacion sobre cuales grupos de atomos forman moleculas, ya que el programa no es lo suficientemente listo como para averiguarlo por si mismo (y probablemente jamas lo sea).  El usuario debe generar \"molecules.dat\" como un archivo de texto sencillo."
+  print "\n"
+  print "El formato de \"molecules.dat\" es como sigue:"
+  print "moleculeId=atomno1,atomno2,atomno3..."
+  print "donde moleculeId es completamente definido por el usuario con caracteres ASCII.  No debe haber espacios a los lados del signo \"=\" o despues de las comas, p.ej., si definimos un dimero de agua asi:\n"
+  print "O  x1  y1  z1"
+  print "H  x2  y2  z2"
+  print "H  x3  y3  z3"
+  print "O  x4  y4  z4"
+  print "H  x5  y5  z5"
+  print "H  x6  y6  z6\n"
+  print "entonces el contenido de \"molecules.dat\" seria:\n"
+  print "water1=1,2,3"
+  print "water2=4,5,6\n"
+  print "tambien podria ser:\n"
+  print "agua1=1,2,3"
+  print "agua2=4,5,6\n"
+  print "El programa entonces genera un archivo entrada con la geometria individual para cada molecula del agregado, y un archivo de entrada para cada molecula del agregado con todos los demas atomos definidos como fantasmas.  La particula moleculeId se vuelve parte de los nombres de archivo, y tambien queda incluida en el comentario/titulo del contenido del archivo de entrada, para facilitar seguir la pista de cada molecula.  Los nombres de archivo siguen el patron:\n filename_geom_moleculeId.inp\n filename_bsse_moleculeId.inp"
+  exit(0)
+else:
+  name=sys.argv[1]
+
+f = open(name,'r')
+
+# find_eq_geom() scans a GAMESS-US output file for an equilibrium geometry
+# there is no error checking: it endlessly loops if there is no eq geom
+# It gets the number of atoms from the output file itself
+# all the atoms and their coords are stored in dictionary eq_geom
+def find_eq_geom():
+  f.seek(0)
+  string = ''
+  i = 0
+  while string != "      ***** EQUILIBRIUM GEOMETRY LOCATED *****\n":
+    string = f.readline()
+    if string[:22] == ' TOTAL NUMBER OF ATOMS':
+      num_atoms = int(string[-3:])
+  else:
+    eq_geom_begins = f.tell()
+    f.seek(eq_geom_begins+154)  #the geom starts 154 characters after the EQUIL GEOM line
+  for i in range(num_atoms):
+    eq_geom[i] = f.readline()
+  return num_atoms
+
+# find_basis loads into memory all the basis functions from the GAMESS-US output file
+def find_basis():
+  f.seek(0)
+  string = ''
+  i = 0
+  while string != "     ATOMIC BASIS SET\n":
+    string = f.readline()
+  else:
+    basis_begins = f.tell()
+    f.seek(basis_begins+219) #the basis start 219 characters after the ATOMIC BASIS line
+  while string[:47] != ' TOTAL NUMBER OF BASIS SET SHELLS             =':  #this indicates the end of the basis
+    string = f.readline()
+#    if string == '\n':
+#      print "Found empty line!"
+#      string = f.readline()
+    basis[i] = string
+    i = i + 1
+
+# form_output scans the basis dictionary to find out the line where
+# each element appears.  The result is stored in a dictionary called
+# geom_basis
+def form_output():
+  j = 0
+  for i in range(len(basis)-1):
+    if basis[i][1:3] == "CA":
+#      print "Ca at key: ",i
+      geom_basis[j] = i
+      j = j + 1
+    if basis[i][1:3] == "O ":
+#      print "O  at key: ",i
+      geom_basis[j] = i
+      j = j + 1
+    if basis[i][1:3] == "H ":
+#      print "H  at key: ",i
+      geom_basis[j] = i
+      j = j + 1
+    if basis[i][1:3] == "F ":
+#      print "F  at key: ",i
+      geom_basis[j] = i
+      j = j + 1
+    if basis[i][1:3] == "C ":
+#      print "C  at key: ",i
+      geom_basis[j] = i
+      j = j + 1
+    if basis[i][1:3] == "S ":
+#      print "S  at key: ",i
+      geom_basis[j] = i
+      j = j + 1
+    if basis[i][1:3] == "AS":
+#      print "As at key: ",i
+      geom_basis[j] = i
+      j = j + 1
+  for i in geom_basis:
+    basis[int(geom_basis[i])] = eq_geom[i]
+
+num_atoms = find_eq_geom()
+find_basis()
+find_eq_geom()
+form_output()  #put xyz coords instead of only chemical symbol
+counter = 0
+  
+# NEED TO TRANSFORM THIS TO A FUNCTION
+# this routine counts the number of times a certain function type appears
+# and then creates the string that goes immediately after the element-coords
+# in the input file. Things like "S   6" or "D   1" that are required by the
+# GAMESS-US input format
+# an empty line indicates stop the function type counting and store the result
+# in the previous empty line
+for i in range(len(basis)-1):
+#  print basis[i]
+  if basis[i][10:12] == 'S ':
+    type = 's'
+#    print "Function is S type"
+    basis[i] = basis[i][14:]
+    counter = counter + 1
+  elif basis[i] == '\n' and counter != 0 and type == 's':
+#    print "Found empty line"
+    basis[i-(counter+1)] = '  S   '+str(counter)+'\n'
+#    print basis[i-(counter+1)]
+    counter = 0
+  if basis[i][10:12] == 'L ':
+    type = 'l'
+#    print "Function is L type"
+    basis[i] = basis[i][14:]
+    counter = counter + 1
+  elif basis[i] == '\n' and counter != 0 and type == 'l':
+#    print "Found empty line"
+    basis[i-(counter+1)] = '  L   '+str(counter)+'\n'
+#    print basis[i-(counter+1)]
+    counter = 0
+  if basis[i][10:12] == 'D ':
+    type = 'd'
+#    print "Function is D type"
+    basis[i] = basis[i][14:]
+    counter = counter + 1
+  elif basis[i] == '\n' and counter != 0 and type == 'd':
+#    print "Found empty line"
+    basis[i-(counter+1)] = '  D   '+str(counter)+'\n'
+#    print basis[i-(counter+1)]
+    counter = 0
+
+f.close()
+
+# now I need to open as many writing streams as input files I want. 
+# The number of molecules defined in "molecules.dat" will tell me 
+# how many file streams to open.
+
+moleculeReader = csv.reader(open('molecules.dat','r'), delimiter='=')
+
+for row in moleculeReader:
+  try:
+    molecules[row[0]] = row[1]
+  except IndexError: 
+    break
+
+for i in molecules.keys():
+  geom_file[i] = open(name[:-4]+'_geom_'+i+'.inp', 'w')
+  bsse_file[i] = open(name[:-4]+'_bsse_'+i+'.inp', 'w')
+
+# I need a way to select single molecules with their basis sets
+for i in range(1,num_atoms): #here we find out all the lines with basis set of an atom
+     basis_count[i-1] = geom_basis[i]-geom_basis[i-1]-1
+
+basis_count[num_atoms-1] = len(basis) - geom_basis[num_atoms-1] - 2
+
+# Routine for saving individual geometries in single-point input files
+# I'll have to renumber the basis functions
+file_counter = 0
+for k in molecules.keys():
+  commands = " $CONTRL COORD=UNIQUE UNITS=ANGS RUNTYP=ENERGY MAXIT=100 $END\n $SYSTEM MWORDS=10 $END\n $SCF DIIS=.TRUE. $END\n $DATA\n optimum "+name+" geom "+str(k)+" for bsse\n"
+  geom_file[k].write(commands)
+#  print "Working on molecule ", k
+  one_geom[:] = []
+  b = eval(molecules[k])
+  for j in b:
+    for i in range(geom_basis[j-1],geom_basis[j-1]+basis_count[j-1]):
+      one_geom.append(basis[i])
+    one_geom.append('\n')
+  # here I have to renumber the basis functions that go into the file
+  # probably traverse one_geom, skip the lines with letters at the beginning
+  # and renumber the others
+  counter = 1
+  for m in range(len(one_geom)):
+    if one_geom[m][0:3] == '  S' or one_geom[m][0:3] == '  L' or one_geom[m][0:3] == '  D' or one_geom[m][0:3] == ' CA' or one_geom[m][0:3] == ' F ' or one_geom[m][0:3] == ' O ' or one_geom[m][0:3] == ' H ' or one_geom[m][0:3] == ' C ' or one_geom[m][0:3] == ' AS' or one_geom[m][0:3] == ' S '  or one_geom[m] == '\n':
+      pass
+    else:
+      one_geom[m] = '   '+str(counter)+one_geom[m][5:]
+      counter  = counter + 1  
+  geom_file[k].write("C1\n")
+  for m in range(len(one_geom)):
+    if one_geom[m] == '\n':
+      geom_file[k].write(one_geom[m])
+    else:
+      geom_file[k].write(one_geom[m][1:])
+  geom_file[k].write(" $END\n")
+  file_counter = file_counter + 1
+
+# In order to generate the ghost atoms, I need to use the whole contents
+# of basis,  I need to traverse the molecules, leave one real, and make
+# all the others ghost atoms.
+
+molecules_list = molecules.keys()
+molecules_list.sort()
+print molecules_list
+
+# here we initialize the dictionary that will contain the real+ghost atoms
+for i in range(len(basis)-1): 
+  bsse_out[i] = "\n"
+
+for i in molecules_list:
+  commands = " $CONTRL COORD=UNIQUE UNITS=ANGS RUNTYP=ENERGY MAXIT=100 $END\n $SYSTEM MWORDS=10 $END\n $SCF DIIS=.TRUE. $END\n $DATA\n optimum "+name+" geom "+str(i)+" for bsse\n"
+  bsse_file[i].write(commands)
+  bsse_file[i].write("C1\n")
+  for j in molecules_list:
+    b = eval(molecules[j])
+    if j == i:
+      for k in b:
+        for l in range(geom_basis[k-1],geom_basis[k-1]+basis_count[k-1]):
+          bsse_out[l] = basis[l]
+    else:
+      for k in b:
+        for l in range(geom_basis[k-1],geom_basis[k-1]+basis_count[k-1]):
+          if l == geom_basis[k-1]:
+            if basis[l][12] != ' ':
+#              print " X         -"+basis[l][12:]
+              bsse_out[l] = " X         -"+basis[l][12:]
+            else:
+#              print " X          -"+basis[l][13:]     
+              bsse_out[l] = " X          -"+basis[l][13:]
+#            print bsse_out[l],
+          else:
+#            print basis[l]
+            bsse_out[l] = basis[l]
+  for j in range(len(bsse_out)):
+    bsse_file[i].write(bsse_out[j])  
+  bsse_file[i].write(" $END\n")  
+
+#for i in range(len(bsse_out)):
+#  print bsse_out[i],
+
+for i in molecules.keys():
+  geom_file[i].close()
+  bsse_file[i].close()
+
+
