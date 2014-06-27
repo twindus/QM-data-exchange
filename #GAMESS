@@ -1,0 +1,71 @@
+#!/usr/bin/perl
+
+# CELINE : extract optimized coordinates from gamess file
+# and write an input file with the template keyword hard coded
+#use strict;
+
+my $ouput_file_name = $ARGV[0];
+unless ($ouput_file_name) {
+    print STDERR "Please enter the name of a GAMESS output file.\n";
+    print STDERR "Aborting.\n";
+    exit 1;
+}
+my $opt_coord = $ARGV[1];
+my $angs2bohr = 0.529177249;
+
+open (INPUT, "<$ouput_file_name") || die "Could not read \"$ouput_file_name\": $!";
+open (OUT, ">>$opt_coord") || die "Error to create the file \"$opt_coord\": $!";
+
+$lines = 0;
+while (sysread INPUT, $buffer, 4096) {
+        $lines += ($buffer =~ tr/\n//);
+}
+close(INPUT);
+
+open(INPUT,"<$ouput_file_name") || die "Could not read \"$ouput_file_name\": $!";
+$i = 0;
+# met le template de tom input file
+print (OUT " \$CONTRL SCFTYP=RHF RUNTYP=OPTIMIZE MULT=1 COORD=CART\n");
+print (OUT "          MOLPLT=.TRUE. PLTORB=.T. \$END\n");
+print (OUT " \$SYSTEM TIMLIM=43200 MWORDS=50 \$END\n");
+print (OUT " \$BASIS  GBASIS=N311 NGAUSS=6 \$END\n");
+print (OUT " \$STATPT NSTEP=200 \$END\n");
+print (OUT " \$DATA\n");
+print (OUT "Coordinates from 6311g  optimization\n");
+print (OUT " C1\n");
+
+while ($i<=$lines){
+	#print STDOUT $list[3], "\n";
+	if ( $list[3] eq "LOCATED"){
+		#print (OUT "Found it \n");
+		@list = &readline();
+		@list = &readline();
+		@list = &readline();
+		@list = &readline();
+		while ($i<=$lines && ($list[0] ne "") ){
+			printf(OUT " %1s%14.1f%15.10f%15.10f%15.10f\n", $list[0], $list[1], $list[2]/$angs2bohr, $list[3]/$angs2bohr, $list[4]/$angs2bohr);
+			@list = &readline();
+			$i+=1;
+		}
+	} else {
+	#print (OUT "Not Found it \n");
+	#print STDOUT $list[2],"\n";
+	}
+	@list = &readline();
+	$i+=1;
+}
+
+print (OUT " \$END\n");
+close (OUT);
+close (INPUT);
+
+
+
+
+sub readline()
+{
+chop($line= <INPUT>);
+$line =~ s/^\s+//;
+@list = split(/\s+/,$line);
+return(@list);
+}
