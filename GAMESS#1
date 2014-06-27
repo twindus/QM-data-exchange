@@ -1,0 +1,60 @@
+"""\
+From Jan Jensen's public repo**
+This python program extracts coordinates and gradients from a GAMESS output
+file and creates a .xzy+vib file.  Note that the sign of the gradient is chaged to produce the force
+
+To use it type (assuming opt.py and the output file is in the same directory):
+
+python opt.py x xx > xxx.xyz
+
+where x is the number of atoms in the molecule and xx is the name of the GAMESS output file. xxx is whatever you want to call your xyz file.
+
+Written by Jan H. Jensen, released under the GNU GPL license
+"""
+
+import string,sys
+
+atoms = eval(sys.argv[1]) # convert x to number
+
+filename = sys.argv[2]
+file = open(filename,'r')
+
+coord = []
+grad = []
+
+while 1:
+    line = file.readline() # read a line from he file
+    if not line: break # if end-of-file: quit
+    words = string.split(line) # split line into words
+
+# equilibrium coordinates are printed out a second time and should not be read
+    if len(words) > 1 and words[1] == 'EQUILIBRIUM': break
+
+# find and read coordniates
+
+    if len(words) > 0 and words[0] == 'COORDINATES': # find line with EQUILIRBIUM as the 1st word
+        file.readline() # skip a line
+        file.readline() # skip a line
+        for i in range(atoms): # read in x, y, z coordinates 
+            line = file.readline()
+            words = string.split(line)
+            coord.append((words[0],words[2],words[3],words[4]))
+
+# find and read gradient
+
+    if len(words) > 0 and words[0] == 'NSERCH=': # find line with NSERCH= as the 1st word
+        for i in range(6):
+            file.readline() # skip 6 lines
+        for i in range(atoms): # read x, y, z component of gradient
+             line = file.readline()
+             words = string.split(line)
+             grad.append((eval(words[3]),eval(words[4]),eval(words[5]))) # gradients to be multiplied by -1, so convert to number
+
+# print in .xyz+vib format and change sign of gradient
+
+scale =  -1.
+for i in range( len(coord) ):
+    if i%atoms == 0: print atoms
+    if i%atoms == 0: print 'title'
+    tog = (coord[i][0],coord[i][1],coord[i][2],coord[i][3],scale*grad[i][0],scale*grad[i][1],scale*grad[i][2])
+    print '%s %s %s %s %f %f %f' % tog
