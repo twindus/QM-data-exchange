@@ -1,0 +1,7 @@
+This will scan through the frequencies from an NWChem calculation and extract the negative ones (from the projected frequencies, so no need to wory about translations or rotations) and outputs them along with the name of the logfile that you fed in. Example:
+
+get_imaginary_freqs_from_NWChem_output.awk logfile.out
+
+might yield something like:
+
+logfile.out Imaginary frquencies: -1014.56, -13.49

@@ -1,0 +1,58 @@
+This script will get the last full geometry from an NWChem optimization or transition state search and output it in a format that can be easily dumped into a new input file. The commandline for using it should look like:
+
+    get_geom.awk logfile.out > coords.out
+
+If you don't want the last geometry (because the energy started going up after the nth step or something) you can specify a different geometry as follows:
+
+    get_geom.awk -v desired_geometry=n logfile.out > coords.out
+
+Where n is the step that produced the desired geometry.
+
+Personally, I find this somewhat cumbersome to type a lot, so I added something like the following to my ~/.bash_functions file. This creats something like an alias that you can feed parameters to.
+
+function get_geom() {
+  export file="$1"
+  if [[ "$2" == "" ]]; then
+    get_geom.awk $file
+  else
+    get_geom.awk -v desired_geometry=$2 $file
+  fi
+}
+
+Now, to run the script I only type:
+
+    get_geom logfile.out > coords.out
+
+or, if I want to specify the geometry:
+
+    get_geom logfile.out n > coords.out
+
+(my function actually uses a unique part of each filename so that I just specify that instead of the whole logfile name)
+
+To use this script, you may need to modify the location of the command interpreter (the first line). If your version of awk isn't in /usr/bin, from the commandline, you may run 'which awk' to find out where your version is.
+
+
+
+
+Since most molecular viewing programs accept .xyz files, I also have the following in my .bash_functions file:
+
+coords2xyz () {
+  if [[ -f "$1" ]]; then
+    coords="$1"
+  else
+    printf "Don't know file $1. Exiting\n"
+    return 1;
+  fi
+
+  natom=`wc -l $coords | awk {'print $1'}`
+  xyz=${coords}.xyz
+  printf "$natom\n" > $xyz
+  printf "Automatically generated xyz file from $coords\n" >> $xyz
+  cat $coords >> $xyz
+}
+
+To use this, from the command line I run:
+
+    coords2xyz coords.out
+
+This will give me a file called coords.out.xyz that can be used by most viewers.
